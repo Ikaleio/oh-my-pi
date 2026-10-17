@@ -4,7 +4,7 @@ import {
 } from "../config/compaction-threshold";
 import { combine, register, type SettingValueOf } from "../config/registry";
 import { COMPACTION_METHOD_CHOICES, DEFAULT_COMPACTION_METHOD_ORDER } from "./compaction-methods";
-import { FRAME_DATA_BYTES_BUDGET, SHAPE_VARIANT_NAMES } from "@oh-my-pi/snapcompact";
+import { SHAPE_VARIANT_NAMES } from "@oh-my-pi/snapcompact";
 
 const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_MODEL_COMPACTION_THRESHOLDS: Record<string, AgentCompactionThresholdOverride> = {};
@@ -81,7 +81,8 @@ export const cfgContextPromotionEnabled = register({
 		tab: "context",
 		group: "General",
 		label: "Auto-Promote Context",
-		description: "Promote to a larger-context model on context overflow instead of compacting",
+		description:
+			"Promote to the model's contextPromotionTarget on context overflow instead of compacting. Retry fallback switches are controlled by Retry Model Fallback",
 	},
 });
 
@@ -446,7 +447,7 @@ export const cfgSnapcompactToolResults = register({
 		group: "Experimental",
 		label: "Snapcompact Tool Results",
 		description:
-			"Experimental: render large historical tool results as dense PNG image(s) instead of text (vision models only). Saves tokens on accumulated read/search output.",
+			"Experimental: render large tool results, the newest one included, as dense PNG image(s) instead of text (vision models only). Saves tokens on accumulated search and command output; read results stay text unless the model is known to edit exactly from images.",
 	},
 });
 
@@ -602,45 +603,6 @@ export const cfgSnapcompactShape = register({
 				label: "Doc 8on16, sentence hues + dimmed stopwords",
 				description: "Two-column doc layout, sentence-hue ink, function words dimmed gray.",
 			},
-		],
-	},
-});
-
-export const cfgSnapcompactFrameBytesBudget = register({
-	id: "snapcompact.frameBytesBudget",
-	type: "number",
-	default: FRAME_DATA_BYTES_BUDGET,
-	ui: {
-		tab: "context",
-		group: "Experimental",
-		label: "Snapcompact Frame Bytes",
-		description:
-			"Maximum base64 bytes of snapcompact archive frames attached to one request. Raise it only when every gateway and provider on the route accepts the larger request body.",
-		options: [
-			{ value: "3000000", label: "3 MB", description: "Default" },
-			{ value: "8000000", label: "8 MB", description: "About 2.5× the default frame payload" },
-			{ value: "16000000", label: "16 MB", description: "Large payloads; check gateway body limits" },
-			{ value: "32000000", label: "32 MB", description: "At the request-size limit of some providers" },
-		],
-	},
-});
-
-export const cfgSnapcompactMaxFrames = register({
-	id: "snapcompact.maxFrames",
-	type: "number",
-	default: 0,
-	ui: {
-		tab: "context",
-		group: "Experimental",
-		label: "Snapcompact Max Frames",
-		description:
-			"Archive frame cap. 0 uses the provider's image budget (5 for unrecognized providers). A positive value replaces that cap (at most 80) and raises the provider's per-request image limit to at least that value. User and tool images share that limit; a request over it drops its oldest images first, archive frames included.",
-		options: [
-			{ value: "0", label: "Auto", description: "Provider image budget" },
-			{ value: "10", label: "10 frames" },
-			{ value: "20", label: "20 frames" },
-			{ value: "40", label: "40 frames" },
-			{ value: "80", label: "80 frames", description: "Snapcompact maximum" },
 		],
 	},
 });
