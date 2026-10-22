@@ -30,6 +30,27 @@ const LIVE_FREE_MODEL_IDS = [
 
 const LIVE_PAID_MODEL_IDS = ["claude-opus-4-8", "gpt-5.5"] as const;
 
+test.each([
+	["opencode-go", "https://opencode.ai/zen/go/v1"],
+	["opencode-zen", "https://opencode.ai/zen/v1"],
+])("%s offers only Step 5 Preview's documented reasoning efforts (#14987)", (provider, baseUrl) => {
+	const model = buildModel({
+		id: "step-5-preview-free",
+		name: "Step 5 Preview Free",
+		api: "openai-completions",
+		provider,
+		baseUrl,
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 65_536,
+	});
+
+	expect(model.thinking?.mode).toBe("effort");
+	expect(getSupportedEfforts(model)).toEqual([Effort.Low, Effort.Medium, Effort.High]);
+});
+
 function modelListResponse(ids: readonly string[]): Response {
 	return Response.json({
 		object: "list",
@@ -1068,6 +1089,48 @@ describe("OpenCode provider discovery", () => {
 			const offline = await resolveProviderModels(managerOptions, "offline");
 			expect(offline.stale).toBe(false);
 			expect(offline.models.map(model => model.id).sort()).toEqual(expectedIds);
+		} finally {
+			await fs.rm(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	test("keeps the pruned Zen catalog across a failed refresh, the retry backoff, and offline launches", async () => {
+		const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-catalog-opencode-zen-failed-refresh-"));
+		try {
+			let fetchFails = false;
+			const baseOptions = opencodeZenModelManagerOptions({
+				apiKey: "free-account-key",
+				fetch: async input => {
+					if (fetchFails) throw new Error("offline");
+					if (String(input).includes("catalog.stencil.so")) return Response.json({});
+					return modelListResponse(LIVE_FREE_MODEL_IDS);
+				},
+			});
+			const managerOptions = {
+				...baseOptions,
+				cacheDbPath: path.join(tempDir, "models.db"),
+				modelsDev: baseOptions.modelsDev ? { ...baseOptions.modelsDev, additiveOnly: true } : undefined,
+			};
+			const expectedIds = [...LIVE_FREE_MODEL_IDS, "jev-1.13", "jev-1.13-free"].sort();
+			const online = await resolveProviderModels(managerOptions, "online");
+			expect(online.models.map(model => model.id).sort()).toEqual(expectedIds);
+
+			// A failed refresh re-persists the snapshot as non-authoritative so the
+			// short retry window applies; that demotion must not drop the retention
+			// keeping the retired bundled Zen models out.
+			fetchFails = true;
+			const failedRefresh = await resolveProviderModels(managerOptions, "online");
+			expect(failedRefresh.stale).toBe(true);
+			expect(failedRefresh.models.map(model => model.id).sort()).toEqual(expectedIds);
+
+			const duringBackoff = await resolveProviderModels(managerOptions, "online-if-uncached");
+			expect(duringBackoff.models.map(model => model.id).sort()).toEqual(expectedIds);
+
+			const offline = await resolveProviderModels(managerOptions, "offline");
+			expect(offline.models.map(model => model.id).sort()).toEqual(expectedIds);
+
+			const failedAgain = await resolveProviderModels(managerOptions, "online");
+			expect(failedAgain.models.map(model => model.id).sort()).toEqual(expectedIds);
 		} finally {
 			await fs.rm(tempDir, { recursive: true, force: true });
 		}
