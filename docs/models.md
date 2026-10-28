@@ -217,6 +217,7 @@ Loading models.yml checks a `modelOverrides` `kind` only against an api the file
 - `imageInputDecoder`: `stb` only. Set this on a custom model or `modelOverrides` entry when the serving backend uses an STB-compatible image decoder that cannot accept WebP; OMP converts attached and historical WebP images before provider dispatch.
 - `imageCountBudget`: positive integer. Set this on a custom model or `modelOverrides` entry to state how many images one request to its host may carry. It replaces the catalog budget, which is 5 for a provider no catalog rule names. A gateway in front of a vendor with a higher limit needs it: once a session holds more images than the budget, OMP drops the oldest ones, which changes the cached prompt prefix.
 - `inlineImageByteBudget`: positive integer. Set this on a custom model or `modelOverrides` entry to state how many base64 image bytes one request to its host may carry. It replaces the catalog budget, which applies only on official endpoints; without either, a request keeps every image and snapcompact archive frames are capped at 3,000,000 bytes. Snapcompact archives get half of this budget, so a gateway that accepts large bodies can keep more frames of CJK history, whose frames run about 0.7–1 MB each. Past the budget OMP drops the oldest images first.
+- `serviceTiers`: list of service-tier ids the host offers for the model, e.g. `[priority, ultrafast]`. Codex discovery fills it from `/models`; set it on a custom model or `modelOverrides` entry when a gateway serves OpenAI's `ultrafast` tier. Without `ultrafast` in the list, `/fast ultra` and `tier.openai: ultrafast` reach only first-party OpenAI.
 - `tokenizer`: opt into a specific embedded local tokenizer when a proxy's model id is ambiguous or noncanonical. Allowed values: `claude-v3`, `claude-v47`, `claude-v5`, `claude-v5-sonnet`, `qwen3`, `deepseek-v3`, `kimi-k2`, `glm5`, and `o200k` (OpenAI GPT-5 and later). Omit it to use catalog identity policy; unknown models retain the fast local estimate.
 
 ## Validation rules (current)
@@ -347,7 +348,7 @@ Provider defaults vs per-model overrides:
 - Model `headers` override provider header keys.
 - `modelOverrides` can override model metadata (`name`, `api`, `kind`, `reasoning`, `thinking`, `input`,
   `imageInputDecoder`, `imageCountBudget`, `inlineImageByteBudget`, `tokenizer`, `supportsTools`, `cost`, `promptCache`, `premiumMultiplier`, `contextWindow`,
-  `maxContextWindow`, `maxTokens`, `omitMaxOutputTokens`, `preferWebsockets`, `headers`, `compat`,
+  `maxContextWindow`, `maxTokens`, `omitMaxOutputTokens`, `preferWebsockets`, `serviceTiers`, `headers`, `compat`,
   `contextPromotionTarget`, `compactionModel`, and `remoteCompaction`).
 - `compat` is deep-merged for nested routing blocks (`openRouterRouting`, `vercelGatewayRouting`,
   `extraBody`, and `whenThinking`).
