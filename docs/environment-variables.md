@@ -118,6 +118,7 @@ Plain provider credential names come from `env` entries in `packages/catalog/src
 | `AIAND_API_KEY`                 | ai& auth                                         | Using `aiand` provider                                         |                                                                                                     |
 | `GMI_API_KEY`                   | GMI Cloud auth                                   | Using `gmi-cloud` provider                                     |                                                                                                     |
 | `MODEL_API_KEY` / `META_API_KEY` | Meta Model API auth                             | Using `meta` provider                                          | Either variable works                                                                               |
+| `INCEPTION_API_KEY`             | Inception Mercury API auth                      | Using `inception` provider                                     | Also available via `/login inception`, which validates the key with a one-token Mercury 3 request (`/v1/models` is public) |
 | `SINGULARITYAPI_DEV_API_KEY`    | SingularityAPI universal gateway auth            | Using `singularityapi-dev` provider                            | Pay-as-you-go, 300+ models; validated against `https://api.singularityapi.dev/v1/models`    |
 | `SINGULARITYAPI_TECH_API_KEY`   | SingularityAPI reserved lanes auth               | Using `singularityapi-tech` provider                           | Slot-reserved DeepSeek lanes; validated against `https://api.singularityapi.tech/v1/models` |
 
@@ -140,7 +141,7 @@ When the broker is enabled, the local SQLite credential store is bypassed and al
 | `OMP_AUTH_BROKER_TOKEN`             | Bearer token sent on every broker endpoint except `/v1/healthz`                              | `OMP_AUTH_BROKER_URL` is set and no token is available from `auth.broker.token` or `<config-dir>/auth-broker.token`       | Resolution: this env → `auth.broker.token` (`$ENV_NAME` indirection supported) → `<config-dir>/auth-broker.token` (mode `0600`). `<config-dir>` is `~/.omp/` (respecting `PI_CONFIG_DIR`).                                                                                           |
 | `OMP_AUTH_BROKER_SNAPSHOT_TTL_MS`   | Freshness window for the encrypted local broker snapshot cache                               | Optional in broker mode                                                                                                   | Default `3600000` (1 h). Freshness is based on broker `snapshot.generatedAt`; `0` disables cache reads/writes and forces the old blocking fetch every startup.                                                                                                                       |
 | `OMP_AUTH_BROKER_SNAPSHOT_CACHE`    | Path to the encrypted local broker snapshot cache                                            | Optional in broker mode                                                                                                   | Defaults to `~/.omp/cache/auth-broker-snapshot.enc` (or XDG cache equivalent). Useful for tests, ephemeral hosts, or relocating the `0600` cache file.                                                                                                                               |
-| `OMP_AUTH_BROKER_ACCOUNT_POOL_FILE` | Process-scoped OAuth account routing for a trusted broker client                             | Optional in broker mode                                                                                                   | Path to a JSON object mapping provider IDs to exact broker `identityKey` arrays. Missing providers are unrestricted; `[]` hides that provider's OAuth accounts; API keys remain visible. Parsed once at startup and fails closed on invalid input. This is not server authorization. |
+| `OMP_AUTH_BROKER_ACCOUNT_POOL_FILE` | Process-scoped broker credential visibility (OAuth accounts and API keys) for a broker client | Optional in broker mode                                                                                                   | Path to a JSON object mapping provider IDs to rules: an `identityKey` array (`[]` hides that provider's OAuth accounts; API keys stay visible), `true`/`false` (everything/nothing), or `{ "accounts"?: [...], "apiKeys"?: boolean }`. Providers without an entry follow the `"*"` rule, else are unrestricted; `"*": false` makes the file an allow-list. Parsed once at startup and fails closed on invalid input. Not broker authorization: a direct client still holds the broker token. Inside `omp auth-gateway serve` it bounds what the gateway's clients can reach; see [auth-broker-gateway.md](./auth-broker-gateway.md#client-account-pools). |
 
 The gateway has no dedicated env vars — it inherits `OMP_AUTH_BROKER_*`. Its own inbound bearer token lives at `<config-dir>/auth-gateway.token` and is managed via `omp auth-gateway token`.
 
@@ -172,6 +173,20 @@ Scope differs between the two `PI_PROXY` forms:
 
 Loopback, link-local, private-range (`10/8`, `172.16/12`, `192.168/16`), and
 `NO_PROXY` targets always bypass, so local model servers and MCP hosts stay direct.
+
+### Request body compression
+
+Request bodies of 1 KiB or more are compressed when sent to a provider's own endpoint that decodes them, as declared by the `request-encodings` / `endpoint-hosts` catalog rules: the official Anthropic API (gzip), the ChatGPT Codex backend (zstd), and the GitHub Copilot API at `api[.individual|.business|.enterprise].githubcopilot.com` (zstd, falling back to gzip). Proxies, relays, models.yml gateways (even under a built-in provider id), and every other host receive uncompressed JSON. If an endpoint, or a TLS-inspecting proxy in front of it, rejects an encoding and the uncompressed resend succeeds, that encoding stays off for the host for the rest of the process.
+
+| Variable                 | Behavior                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `PI_REQUEST_COMPRESSION` | `0`/`false`/`no`/`off` sends every request body uncompressed (enabled by default) |
+
+### Anthropic API version
+
+| Variable                   | Behavior                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PI_ANTHROPIC_API_VERSION` | `anthropic-version` sent to the official Anthropic API (`api.anthropic.com`): `2023-06-01` (default) or `2026-10-21`. Under `2026-10-21`, `temperature`/`top_p`/`top_k` are omitted because that version rejects them. Other hosts (Bedrock, Foundry, Copilot, gateways, Anthropic-compatible providers) stay on `2023-06-01`; unknown values log a warning and use `2023-06-01` |
 
 ### Anthropic Foundry Gateway (Azure / enterprise proxy)
 
@@ -216,7 +231,6 @@ When `CLAUDE_CODE_USE_FOUNDRY` is enabled, Anthropic requests switch to Foundry 
 | `ANTHROPIC_FOUNDRY_API_KEY` | Token string                                   | Used for `Authorization: Bearer <token>`                                                                                                                      |
 | `ANTHROPIC_CUSTOM_HEADERS`  | Header list string                             | Extra headers; format `header-a: value, header-b: value` or newline-separated. Also forwarded outside Foundry whenever `ANTHROPIC_BASE_URL` is non-Anthropic. |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | Boolean-like string (`1`, `true`, `yes`, `on`) | Omits pre-release fields (`context_management`, beta tool fields, task budgets, structured-output format, `thinking.block_binding`, server compaction) and their beta headers on provider `anthropic` |
-| `PI_ANTHROPIC_GZIP` | Boolean-like string (`0`, `false`, `no`, `off` disable) | Request bodies of 1 KiB or more sent to the official Anthropic API are gzip-compressed (enabled by default); `0` sends them uncompressed. Applies to every provider whose requests reach `api.anthropic.com`, not only Foundry |
 | `NODE_EXTRA_CA_CERTS`       | PEM path or inline PEM                         | Extra CA chain for server certificate validation                                                                                                              |
 | `CLAUDE_CODE_CLIENT_CERT`   | PEM path or inline PEM                         | mTLS client certificate                                                                                                                                       |
 | `CLAUDE_CODE_CLIENT_KEY`    | PEM path or inline PEM                         | mTLS client private key (must be paired with cert)                                                                                                            |
@@ -306,10 +320,10 @@ OAuth host chain: `KIMI_CODE_OAUTH_HOST` → `KIMI_OAUTH_HOST` → `https://auth
 | Variable                    | Default / behavior                                              |
 | --------------------------- | --------------------------------------------------------------- |
 | `PI_AI_GEMINI_CLI_VERSION`  | Overrides Gemini CLI user-agent version tag (`0.46.0` if unset) |
-| `PI_AI_ANTIGRAVITY_VERSION` | Overrides the auto-discovered Antigravity hub user-agent version; when unset and discovery fails, the fallback is `2.8.0` |
-| `PI_AI_ANTIGRAVITY_CL`      | Overrides Antigravity hub user-agent build changelist (`963137146` if unset) |
-| `PI_AI_ANTIGRAVITY_OS`      | Overrides Antigravity hub user-agent os_type (pinned `darwin` if unset) |
-| `PI_AI_ANTIGRAVITY_ARCH`    | Overrides Antigravity hub user-agent arch (pinned `arm64` if unset) |
+| `PI_AI_ANTIGRAVITY_VERSION` | Overrides the auto-discovered Antigravity hub user-agent version; when unset and discovery fails, the fallback is `2.26.0` |
+| `PI_AI_ANTIGRAVITY_CL`      | Overrides Antigravity hub user-agent build changelist (`1005016104` if unset) |
+| `PI_AI_ANTIGRAVITY_OS`      | Overrides Antigravity hub user-agent os_type (unset: the native build for the host OS, `darwin`, `linux` or `windows`; other OSes report `linux`) |
+| `PI_AI_ANTIGRAVITY_ARCH`    | Overrides Antigravity hub user-agent arch (unset: that build's arch, `arm64` on macOS, `amd64` on Linux and Windows) |
 
 ### GitLab Duo
 
@@ -341,7 +355,6 @@ therefore completes through the paste-code path.
 | `PI_CODEX_WEBSOCKET`                        | `1`/`true` enables websocket transport preference                                                                                                                                                             |
 | `PI_CODEX_RESPONSES_LITE`                   | `1`/`true` opts normal inference into Responses Lite; `0`/`false` forces the standard Responses body; unset defaults normal inference to full Responses                                                       |
 | `PI_OPENAI_STATEFUL`                        | Overrides the stateful-chaining default for the platform OpenAI Responses API (`previous_response_id`, forces `store: true`): on by default against api.openai.com, off elsewhere                             |
-| `PI_CODEX_ZSTD`                             | `0`/`false` disables zstd compression of request bodies sent to the official Codex API (enabled by default)                                                                                                   |
 | `PI_CODEX_WEBSOCKET_IDLE_TIMEOUT_MS`        | Positive integer override (default `300000`)                                                                                                                                                                  |
 | `PI_CODEX_WEBSOCKET_FIRST_EVENT_TIMEOUT_MS` | First-event timeout override (default `300000`)                                                                                                                                                               |
 | `PI_CODEX_WEBSOCKET_PING_INTERVAL_MS`       | Ping interval override (default `10000`)                                                                                                                                                                      |
@@ -379,6 +392,7 @@ therefore completes through the paste-code path.
 | `EXA_API_KEY`                                       | Exa search/MCP; alternatively use `/login exa`                            |
 | `TINYFISH_API_KEY`                                  | TinyFish search provider (required)                                       |
 | `BRAVE_API_KEY`                                     | Brave search provider                                                     |
+| `DEEPSEEK_API_KEY`                                  | DeepSeek search provider (same key as DeepSeek models)                    |
 | `PERPLEXITY_API_KEY`                                | Perplexity search provider API-key mode                                   |
 | `PERPLEXITY_COOKIES`                                | Perplexity cookie-auth search mode                                        |
 | `PI_PERPLEXITY_RESPONSES`                           | `1` selects the Perplexity Responses endpoint instead of Chat Completions |
@@ -423,7 +437,7 @@ For an Anthropic catalog model, `searchAnthropic()` uses credentials in this ord
 
 ### TypeSafe judgments
 
-Small typed decisions the app makes about its own state (the `auto` thinking-level difficulty classifier, Smart unexpected-stop detection, git TUI AI staging, and `judge()` eval helper) use the `judge` model role. With a TypeSafe credential, the catalog discovers the account-visible judge roster from `GET /v1/models`—including `jev-latest` and `jev-preview` when advertised—and the role selects an exact catalog model. The built-in judge chain is `typesafe/jev-latest`, `openrouter/~typesafe/jev-latest`, `tiny`, `smol`, `default`, then the active-session model. Once the chain reaches a native System One model (TypeSafe directly or through OpenRouter), it only falls back to other native models: when every native judge fails, the judgment fails instead of degrading to a prompted chat or on-device model. Each failed candidate is logged as `judgment candidate failed`. Configure `modelRoles.judge` or `retry.fallbackChains.judge` to select `typesafe/jev-preview` or another judge candidate.
+Small typed decisions the app makes about its own state (the `auto` thinking-level difficulty classifier, Smart unexpected-stop detection, git TUI AI staging, and `judge()` eval helper) use the `judge` model role. With a TypeSafe credential, the catalog discovers the account-visible judge roster from `GET /v1/models`—including `jev-latest` and `jev-preview` when advertised, alongside the seeded `jev-1.14.0` the alias-only listing omits—and the role selects an exact catalog model. The built-in judge chain is `typesafe/jev-1.14.0`, `openrouter/typesafe/jev-1.14`, `tiny`, `smol`, `default`, then the active-session model. Once the chain reaches a native System One model (TypeSafe directly or through OpenRouter), it only falls back to other native models: when every native judge fails, the judgment fails instead of degrading to a prompted chat or on-device model. Each failed candidate is logged as `judgment candidate failed`. Configure `modelRoles.judge` or `retry.fallbackChains.judge` to select `typesafe/jev-preview` or another judge candidate.
 
 | Variable                 | Default / behavior                                                                                                                                                                                                                                       |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -491,6 +505,8 @@ Shell subprocess filtering is separate (`packages/utils/src/env.ts`): it strips 
 | `PI_EDIT_FUZZY`              | `1`/`true` forces edit fuzzy matching on, `0`/`false` off; `auto` or any other value is ignored and `edit.fuzzyMatch` applies |
 | `PI_EDIT_FUZZY_THRESHOLD`    | Fuzzy-match similarity threshold in `[0, 1]` overriding `edit.fuzzyThreshold`; `auto`, non-numeric, or out-of-range values are ignored |
 | `PI_INTENT_TRACING`          | Boolean flag override for tool intent metadata; unset or empty falls back to `tools.intentTracing`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `PI_INTENT_DESC`             | Replaces the tool-schema description of the injected intent field (default `concise intent`); unset or empty keeps the default |
+| `PI_INTENT_PROMPT`           | Replaces the system-prompt guidance line for the intent field (text after ``Most tools take `i`: ``); unset or empty keeps the default |
 | `PI_STRICT_EDIT_MODE`        | If `1`, disables built-in model-specific edit-mode fallbacks, so the configured/global `edit.mode` is used unless `PI_EDIT_VARIANT` or `edit.modelVariants` overrides it                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `PI_FORCE_IMAGE_PROTOCOL`    | Forces supported image protocol (`kitty`, `iterm2`/`iterm`, `sixel`, `none`) where used. Setting `kitty` inside tmux also opts into Kitty Unicode placeholder placement unless `PI_KITTY_PLACEHOLDERS=0` or `PI_NO_KITTY_PLACEHOLDERS=1` disables it                                                                                                                                                                                                                                                                                                                                                       |
 | `PI_ALLOW_SIXEL_PASSTHROUGH` | Allows SIXEL passthrough when `PI_FORCE_IMAGE_PROTOCOL=sixel`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -585,6 +601,21 @@ These affect where coding-agent stores data and which process-local settings ove
 
 `PI_BASH_NO_CI`, `PI_BASH_NO_LOGIN`, and `PI_SHELL_PREFIX` use their `CLAUDE_*` aliases when the canonical variable is unset or empty. These controls use non-empty string checks, not boolean parsing: even `0` or `false` activates the corresponding no-CI/no-login control.
 
+### Set by the `bash` tool
+
+Every command the agent runs through the `bash` tool (foreground, background, PTY, ACP client terminal, and `name`-launched services) receives the current session identity:
+
+| Variable          | Value                                                                        |
+| ----------------- | ---------------------------------------------------------------------------- |
+| `PI_SESSION_ID`   | Current session ID                                                           |
+| `PI_SESSION_FILE` | Absolute path to the current session JSONL file; empty when not persisted (`--no-session`) |
+
+Values are read when each tool call starts, so the next call follows `/fork`, `/new`, and `/resume`, and a call already under way keeps the session it started in. They are always set, so an empty value replaces a stale one inherited from a parent omp process. User `!` commands do not receive them.
+
+```bash
+echo "$PI_SESSION_ID"
+```
+
 ---
 
 ## 8) UI/theme/session detection (auto-detected env)
@@ -624,6 +655,19 @@ These are read as runtime signals; they are usually set by the terminal/OS rathe
 | `PI_KITTY_PLACEHOLDERS`        | `1` forces Kitty Unicode placeholder placement on; `0` forces it off. Under a terminal multiplexer, use `1` only after confirming the outer terminal supports Kitty `U=1` placeholders—otherwise U+10EEEE may render as literal PUA boxes              |
 | `PI_NO_KITTY_PLACEHOLDERS`     | `1` hard-disables Kitty Unicode placeholder placement and takes precedence over `PI_KITTY_PLACEHOLDERS`                                                                                                                                            |
 | `PI_TUI_RESIZE_IN_PLACE`       | `1`/`true` force in-place resize (no alt-screen borrow, no ED3 rewrap); `0`/`false` force the alt-screen fast path. Default-on for Warp, which re-reports its size on alt-screen toggles — except on a ConPTY host (Windows, and WSL through `wslhost`), where conhost owns the grid and repaints its own viewport on resize, so the anchor cannot be recovered |
+
+### Remote file links
+
+| Variable | Behavior |
+| --- | --- |
+| `PI_LINK_SCHEME` | Custom file-link scheme, for example `ompfile`, without `:` or `://`. Matched case-insensitively against `^[a-z][a-z0-9+.-]*$` and emitted lowercase. An invalid value logs a warning and keeps ordinary file/VS Code targets. |
+| `PI_LINK_HOST` | Remote machine name used with `PI_LINK_SCHEME`, optionally with `:port`; defaults to `os.hostname()`. Letters, digits, `.`, `_`, and `-` only; an invalid value logs a warning and keeps ordinary targets. Has no effect without a scheme. |
+
+The interactive TUI reads these variables once at startup. Both OSC 8 links and native TSP file links use the custom scheme, which takes precedence over VS Code targets. SDK hosts can call `applyFileLinkSetting` with an explicit configuration. Native image context-menu open actions keep local `file://` URLs because the action runs locally.
+
+For example, start a remote session with `PI_LINK_SCHEME=ompfile PI_LINK_HOST=beelink omp`. A file link to `/work/a b.ts` at line 42, column 7 targets `ompfile://beelink/work/a%20b.ts?line=42&col=7`. The optional `line` and `col` query parameters preserve the supplied position; absent values are omitted. Plain `file:` links never carry these parameters.
+
+The desktop protocol handler must route the host to the remote machine, percent-decode the pathname, and read the optional position parameters. Windows drive paths use `/C:/...`. UNC paths retain the file server in a double-slash pathname, for example `ompfile://beelink//nas/share/a.ts`. Malformed filesystem paths render without a link. File links the model writes in Markdown keep their own query or fragment (for example `#L10`), so handlers must ignore parameters they do not recognize. The handler itself is registered separately on the desktop.
 
 ### Browser launch/proxy controls
 
