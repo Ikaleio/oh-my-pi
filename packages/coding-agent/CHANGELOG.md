@@ -6,6 +6,8 @@
 
 - Added `inlineImageByteBudget` to custom models and `modelOverrides` in models.yml, so a custom gateway that accepts large request bodies can state its image byte limit; snapcompact archives get half of it instead of the fixed 3 MB, which cut CJK history to about 3 frames ([#15091](https://github.com/can1357/oh-my-pi/pull/15091) by [@Ikaleio](https://github.com/Ikaleio))
 - Added `serviceTiers` to custom models and `modelOverrides` in models.yml; listing `ultrafast` lets `/fast ultra` and `tier.openai: ultrafast` send `service_tier: "ultrafast"` through a gateway instead of only to first-party OpenAI
+- A per-call `model` can be a bare model id (e.g. `claude-opus-5.5:max`) when exactly one approved model carries it; an id several approved models carry fails with the exact choices instead of picking one
+- `task.perCallModelAllow` in your own settings now approves the models it lists instead of only narrowing role grants, and accepts globs such as `ikaleio/*`; a project list still only narrows
 
 ## [18.18.2] - 2026-11-08
 

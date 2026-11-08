@@ -136,16 +136,20 @@ const rows: Row[] = [
 		approved: false,
 	},
 	{
-		name: "the allowlist never expands a glob",
-		settings: { modelRoles: { review: "mock/target" }, "task.perCallModelAllow": ["mock/*"] },
-		approved: false,
+		name: "an operator allowlist glob approves the models it matches",
+		settings: { "task.perCallModelAllow": ["mock/*"] },
+		approved: true,
 	},
 	{
 		name: "the allowlist trims literal entries",
 		settings: { modelRoles: { review: "mock/target" }, "task.perCallModelAllow": [" mock/target "] },
 		approved: true,
 	},
-	{ name: "allowlist alone grants nothing", settings: { "task.perCallModelAllow": ["mock/target"] }, approved: false },
+	{
+		name: "an operator allowlist approves what it lists",
+		settings: { "task.perCallModelAllow": ["mock/target"] },
+		approved: true,
+	},
 	{
 		name: "brackets in a literal id are not a glob",
 		settings: { modelRoles: { review: "mock/glm[1m]" } },
@@ -257,6 +261,7 @@ describe("per-call model advertisement", () => {
 		expect(getPerCallModelAdvertisement(Settings.isolated())).toEqual({
 			roles: [],
 			allowlist: [],
+			allowlistGrants: false,
 			parentModelWithheld: false,
 		});
 	});
@@ -285,6 +290,7 @@ describe("per-call model advertisement", () => {
 				{ role: "custom", patterns: ["mock/target"] },
 			],
 			allowlist: ["mock/target", "unavailable/model@upstream"],
+			allowlistGrants: true,
 			parentModelWithheld: false,
 		});
 	});
@@ -344,6 +350,7 @@ describe("per-call model advertisement", () => {
 		expect(getPerCallModelAdvertisement(child)).toEqual({
 			roles: [{ role: "smol", patterns: ["mock/edited"] }],
 			allowlist: ["mock/edited"],
+			allowlistGrants: true,
 			parentModelWithheld: false,
 		});
 
@@ -354,6 +361,7 @@ describe("per-call model advertisement", () => {
 		expect(getPerCallModelAdvertisement(host)).toEqual({
 			roles: [{ role: "slow", patterns: ["host/model"] }],
 			allowlist: ["host/model"],
+			allowlistGrants: true,
 			parentModelWithheld: false,
 		});
 	});
@@ -367,6 +375,7 @@ describe("per-call model advertisement", () => {
 		expect(getPerCallModelAdvertisement(child)).toEqual({
 			roles: [{ role: "slow", patterns: ["mock/other"] }],
 			allowlist: ["mock/other"],
+			allowlistGrants: true,
 			parentModelWithheld: false,
 		});
 	});

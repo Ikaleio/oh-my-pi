@@ -110,6 +110,8 @@ export function parentModelGrantPattern(model: Model<Api>): string | undefined {
 export interface PerCallModelAdvertisement {
 	roles: { role: string; patterns: string[] }[];
 	allowlist: string[];
+	/** The allowlist comes from the operator's layers and approves exactly the models it lists. */
+	allowlistGrants: boolean;
 	/**
 	 * True when the caller's live model cannot be written as one selector, or a non-empty allowlist does not list it,
 	 * so the own-model clause would name a model dispatch refuses.
@@ -140,9 +142,18 @@ function configuredRoleGrantPatterns(settings: Settings): PerCallModelAdvertisem
 	});
 }
 
-/** The allowlist compares canonical identities literally; it never resolves or case-folds entries. */
+/**
+ * The allowlist compares canonical identities literally, except entries with `*`/`?`, which match as
+ * `Bun.Glob` patterns (e.g. `ikaleio/*`); it never resolves or case-folds entries.
+ */
 function allowlistAdmitsIdentity(allow: string[], identity: string): boolean {
-	return allow.length === 0 || allow.some(entry => entry.trim() === identity);
+	return (
+		allow.length === 0 ||
+		allow.some(entry => {
+			const trimmed = entry.trim();
+			return /[*?]/.test(trimmed) ? new Bun.Glob(trimmed).match(identity) : trimmed === identity;
+		})
+	);
 }
 
 /**
@@ -232,14 +243,25 @@ function advertisedGrants(
 		const selectors = [...new Set(patterns.map(advertise).filter(selector => selector !== undefined))];
 		return selectors.length > 0 ? [{ role, patterns: selectors }] : [];
 	});
+	const allowEntries = [...new Set((operatorAllow.length > 0 ? operatorAllow : liveAllow).map(entry => entry.trim()))];
+	// A glob is no selector a caller can send, so it is listed as the available chat models it matches.
+	const allowlist = allowEntries.flatMap(entry => {
+		if (!/[*?]/.test(entry) || !registry) return [entry];
+		models ??= {
+			chat: registry.getAvailable("chat"),
+			catalog: registry.getAll(),
+			preferences: getModelMatchPreferences(authority),
+		};
+		const glob = new Bun.Glob(entry);
+		return models.chat.map(formatModelStringWithRouting).filter(identity => glob.match(identity));
+	});
 	return {
 		authority,
 		revision: settings.revision,
 		catalog: models?.catalog,
 		roles,
-		allowlist: [...new Set((operatorAllow.length > 0 ? operatorAllow : liveAllow).map(entry => entry.trim()))].filter(
-			entry => allowlistsAdmitIdentity(allowlists, entry),
-		),
+		allowlist: [...new Set(allowlist)].filter(entry => allowlistsAdmitIdentity(allowlists, entry)),
+		allowlistGrants: operatorAllow.length > 0,
 		allowlists,
 	};
 }
@@ -262,6 +284,7 @@ export function getPerCallModelAdvertisement(
 	return {
 		roles: grants.roles,
 		allowlist: grants.allowlist,
+		allowlistGrants: grants.allowlistGrants,
 		// Same literal comparison dispatch applies to the allowlist.
 		parentModelWithheld:
 			parentModel !== undefined &&
@@ -295,7 +318,11 @@ function computeGranted(
 	chat: Model<Api>[],
 	catalog: Model<Api>[],
 ): boolean {
-	if (!allowlistsAdmitIdentity(perCallAllowlists(grants.settings), target)) return false;
+	const allowlists = perCallAllowlists(grants.settings);
+	if (!allowlistsAdmitIdentity(allowlists, target)) return false;
+	// The operator's own allowlist grants what it names (e.g. `ikaleio/*` opens a whole gateway);
+	// project and subagent-injected lists can still only narrow it, as checked above.
+	if (allowlists[0].length > 0) return true;
 	return perCallModelGrantPatterns(grants).some(pattern => {
 		// Full-catalog literals win even when unavailable, so :low and [1m] never broaden a grant.
 		const exact = exactIdentity(pattern, catalog);
@@ -345,10 +372,64 @@ export function assertPerCallModelApproved(
 		cache.decisions.set(target, granted);
 	}
 	if (granted) return;
-	const allowGuidance = perCallAllowlists(grants.settings).some(allow => allow.length > 0)
-		? " It must also be listed in task.perCallModelAllow."
-		: "";
+	const [operatorAllow, liveAllow] = perCallAllowlists(grants.settings);
+	const allowGuidance =
+		operatorAllow.length > 0
+			? " Only models task.perCallModelAllow matches are approved."
+			: liveAllow.length > 0
+				? " It must also be listed in task.perCallModelAllow."
+				: "";
 	throw new PerCallModelError(
 		`Per-call model ${target} is not approved for agent "${grants.agentName}": use a model named by a chat role configured outside project settings, the selected agent's own frontmatter (bundled or user-level agents only), or the parent's model.${allowGuidance} Catalog or credentials alone do not approve a model.`,
 	);
+}
+
+/**
+ * Expand a bare `model-id[:level]` per-call selector to the exact selector of the one approved,
+ * available chat model carrying that id. A literal id wins over a `:level` split, as in
+ * {@link exactIdentity}. No carrier, an unapproved one, or several approved ones throw instead
+ * of picking, so a bare id never routes a spawn to a model the caller could not have named exactly.
+ */
+export function resolveBarePerCallModel(
+	selector: string,
+	grants: PerCallModelGrants,
+	registry: ApprovalRegistry,
+): string {
+	const chat = registry.getAvailable("chat");
+	const carriers = (id: string) => chat.filter(model => model.id.toLowerCase() === id.toLowerCase());
+	let id = selector;
+	let level: string | undefined;
+	let candidates = carriers(id);
+	if (candidates.length === 0) {
+		const split = splitThinkingSuffix(selector, -1, MAX_THINKING_SUFFIX_OPTIONS);
+		if (split.level) {
+			id = split.base;
+			level = split.level;
+			candidates = carriers(id);
+		}
+	}
+	if (candidates.length === 0) {
+		throw new PerCallModelUnavailableError(
+			`No available chat model has id ${JSON.stringify(id)}. Use an exact provider/model-id selector.`,
+		);
+	}
+	const approved: Model<Api>[] = [];
+	let refusal: PerCallModelError | undefined;
+	for (const model of candidates) {
+		try {
+			assertPerCallModelApproved(model, grants, registry);
+			approved.push(model);
+		} catch (error) {
+			if (!(error instanceof PerCallModelError)) throw error;
+			refusal ??= error;
+		}
+	}
+	if (refusal && approved.length === 0) throw refusal;
+	const choices = approved.map(formatModelStringWithRouting);
+	if (choices.length > 1) {
+		throw new PerCallModelError(
+			`Model id ${JSON.stringify(id)} is served by ${choices.length} approved models; use one exact selector: ${choices.join(", ")}.`,
+		);
+	}
+	return level ? `${choices[0]}:${level}` : choices[0];
 }

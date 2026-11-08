@@ -366,7 +366,7 @@ export function perCallModelEnabled(settings: Settings, invocationKind: "task" |
 }
 
 /**
- * Validates `task.perCallModelAllow`: a list of exact `provider/model-id` strings. A non-string
+ * Validates `task.perCallModelAllow`: a list of exact `provider/model-id` strings or globs. A non-string
  * entry fails load and writes instead of reaching approval as an entry that matches nothing.
  */
 function validatePerCallModelAllow(value: unknown): void {
@@ -397,7 +397,7 @@ export const cfgTaskPerCallModelAllow = register({
 		// The editor writes the global layer; hide a project-supplied list so the repository cannot promote it.
 		condition: "perCallModelAllowNotProject",
 		description:
-			"Exact selectors: `provider/model-id`, including `@upstream` only for a pinned OpenRouter/Vercel route (e.g. `openrouter/x@y`). When set, a per-call model must also be listed here. Empty: every model the configuration grants. A project list can only narrow this one.",
+			"Exact selectors: `provider/model-id`, including `@upstream` only for a pinned OpenRouter/Vercel route (e.g. `openrouter/x@y`), or `*`/`?` globs such as `ikaleio/*`. When set, a per-call model may be exactly a model listed here. Empty: every model the configuration grants. A project list can only narrow this one.",
 	},
 });
 
