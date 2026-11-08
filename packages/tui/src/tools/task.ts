@@ -2,6 +2,7 @@ import type { Usage } from "@oh-my-pi/pi-ai";
 import { isRecord } from "@oh-my-pi/pi-utils";
 import type { ThemeColor } from "../theme/theme";
 import type { ConfiguredThinkingLevel } from "../render/render-utils";
+import type { TaskEffort } from "../thinking";
 import type { ToolRenderer } from "./renderer";
 /**
  * TUI rendering for task tool.
@@ -2254,15 +2255,15 @@ export interface TaskItem {
 	agent?: string;
 	/** Historical source session selected by the bundled consult agent. */
 	sourceSession?: string;
-	/** Optional model selector override for the historical source session. */
+	/** Model selector(s) for this spawn; overrides `task.agentModelOverrides` and the agent definition (for seance, the saved source model). */
 	model?: string | string[];
 	/** Inline instructions; exactly one of task or taskFile is required. */
 	task?: string;
 	taskFile?: string;
 	/** How open-ended the work is; required by the schema and the child's sole `auto` thinking classification input. */
 	solutionSpace?: string;
-	/** Per-spawn thinking effort: lowest/middle/highest level the resolved model supports. Overrides the agent's default selector (e.g. `auto`). */
-	effort?: "lo" | "med" | "hi";
+	/** Per-spawn thinking effort (see {@link TaskEffort}). Overrides the agent's default selector (e.g. `auto`). */
+	effort?: TaskEffort;
 	/** Caller-provided output schema; its presence overrides the selected agent's schema. */
 	outputSchema?: unknown;
 	/** Validation behavior for a caller-provided or inherited output schema. */
@@ -2286,7 +2287,7 @@ export interface TaskParams {
 	agent?: string;
 	/** Historical source session selected by the bundled consult agent. */
 	sourceSession?: string;
-	/** Optional model selector override for the historical source session. */
+	/** Model selector(s) (flat form); see {@link TaskItem.model}. */
 	model?: string | string[];
 	/** The work (flat form). */
 	task?: string;
@@ -2294,8 +2295,8 @@ export interface TaskParams {
 	taskFile?: string;
 	/** How open-ended the work is (flat form); see {@link TaskItem.solutionSpace}. */
 	solutionSpace?: string;
-	/** Per-spawn thinking effort (flat form): lowest/middle/highest level the resolved model supports. */
-	effort?: "lo" | "med" | "hi";
+	/** Per-spawn thinking effort (flat form); see {@link TaskEffort}. */
+	effort?: TaskEffort;
 	/** Caller-provided output schema; its presence overrides the selected agent's schema. */
 	outputSchema?: unknown;
 	/** Validation behavior for a caller-provided or inherited output schema. */

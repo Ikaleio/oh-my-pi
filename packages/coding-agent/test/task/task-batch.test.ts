@@ -393,20 +393,19 @@ describe("task.batch validation", () => {
 	// The agent loop validates arguments against the wire schema before execute(),
 	// and that schema deletes undeclared keys. A seance-only field on an ordinary
 	// agent must still be refused by every call form instead of being dropped,
-	// leaving the child on its own model while the caller believes it pinned another.
+	// leaving the child on a fresh session while the caller believes it consults a source.
 	// `task.structured` and `task.isolation.enabled` choose between the prebuilt and
 	// generated batch schemas, each with and without `isolated`.
 	it.each([
-		{ form: "batch", seance: "hidden", batch: true, structured: false, isolation: false, field: "model" },
-		{ form: "batch", seance: "hidden", batch: true, structured: true, isolation: false, field: "model" },
-		{ form: "batch", seance: "hidden", batch: true, structured: false, isolation: true, field: "model" },
-		{ form: "batch", seance: "hidden", batch: true, structured: true, isolation: true, field: "model" },
-		{ form: "batch", seance: "hidden", batch: true, structured: false, isolation: false, field: "sourceSession" },
-		{ form: "batch", seance: "advertised", batch: true, structured: false, isolation: false, field: "model" },
-		{ form: "flat", seance: "hidden", batch: false, structured: false, isolation: false, field: "model" },
+		{ form: "batch", seance: "hidden", batch: true, structured: false, isolation: false },
+		{ form: "batch", seance: "hidden", batch: true, structured: true, isolation: false },
+		{ form: "batch", seance: "hidden", batch: true, structured: false, isolation: true },
+		{ form: "batch", seance: "hidden", batch: true, structured: true, isolation: true },
+		{ form: "batch", seance: "advertised", batch: true, structured: false, isolation: false },
+		{ form: "flat", seance: "hidden", batch: false, structured: false, isolation: false },
 	])(
-		"refuses $field on an ordinary agent in the $form form with seance $seance (structured: $structured, isolation: $isolation)",
-		async ({ seance, batch, structured, isolation, field }) => {
+		"refuses sourceSession on an ordinary agent in the $form form with seance $seance (structured: $structured, isolation: $isolation)",
+		async ({ seance, batch, structured, isolation }) => {
 			const bundledSeance = loadBundledAgents().find(agent => agent.name === "seance")!;
 			mockDiscovery(seance === "advertised" ? [taskAgent, bundledSeance] : taskAgent);
 			const run = vi
@@ -422,7 +421,7 @@ describe("task.batch validation", () => {
 					},
 				}),
 			);
-			const item = { name: "Alpha", agent: "task", task: "Do A.", solutionSpace: "c", [field]: "stub/model-b" };
+			const item = { name: "Alpha", agent: "task", task: "Do A.", solutionSpace: "c", sourceSession: "source-b" };
 			const mock = createMockModel({
 				responses: [
 					{
@@ -451,7 +450,7 @@ describe("task.batch validation", () => {
 
 			const toolResult = agent.state.messages.find(message => message.role === "toolResult");
 			const text = toolResult?.role === "toolResult" ? getFirstText(toolResult) : "";
-			expect(text).toContain(`\`${field}\` is only accepted for the \`seance\` agent.`);
+			expect(text).toContain("`sourceSession` is only accepted for the `seance` agent.");
 			expect(toolResult?.role === "toolResult" && toolResult.isError).toBe(true);
 			expect(run).not.toHaveBeenCalled();
 		},

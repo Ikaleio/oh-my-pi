@@ -9,7 +9,14 @@ import * as os from "node:os";
 import path from "node:path";
 import { $env, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
-import { resolveAgentModelSelection, resolveConfiguredModelPatterns } from "../config/model-resolver";
+import {
+	disabledProviderIds,
+	normalizeModelPatternList,
+	resolveAgentModelSelection,
+	resolveConfiguredModelPatterns,
+	resolveExplicitModelRole,
+	resolveUniqueModelSelector,
+} from "../config/model-resolver";
 import { type OAuthAccountPools, validateAgentAccountPools } from "../config/account-pools";
 import {
 	type CompactionThresholdPair,
@@ -310,6 +317,31 @@ function assertDepthAndSpawnAllowed(request: StructuredSubagentRequest, agentNam
 }
 
 /**
+ * Pin each caller-chosen `model` selector to one available model so the child
+ * never runs on a guessed sibling. `@role` aliases pass through to role
+ * expansion; every other selector must name exactly one enabled model.
+ */
+async function pinRequestedModels(request: StructuredSubagentRequest): Promise<string[]> {
+	const { modelRegistry, settings } = request.session;
+	const selectors = normalizeModelPatternList(request.model);
+	if (selectors.every(selector => resolveExplicitModelRole(selector, settings))) return selectors;
+	if (!modelRegistry)
+		throw new StructuredSubagentError("preflight", "This session cannot resolve a `model` selector.");
+	await modelRegistry.awaitBackgroundRefresh().catch(() => {});
+	const disabledProviders = disabledProviderIds(settings);
+	const available = modelRegistry.getAvailable().filter(model => !disabledProviders.has(model.provider));
+	try {
+		return selectors.map(selector =>
+			resolveExplicitModelRole(selector, settings) ? selector : resolveUniqueModelSelector(selector, available),
+		);
+	} catch (error) {
+		throw new StructuredSubagentError("preflight", error instanceof Error ? error.message : String(error), {
+			cause: error,
+		});
+	}
+}
+
+/**
  * In-flight agent discovery, keyed by resolved cwd, the effective extension
  * roots and the provider/source toggles `discoverAgents` consults. Concurrent
  * preflights (task batch items, eval `agent()` fan-out) share one disk scan;
@@ -431,7 +463,7 @@ export async function resolveEffectiveSubagentPolicy(
 	const hasPreparedSeance = preparedSeance !== undefined;
 	const parentActiveModelPattern = hasPreparedSeance ? undefined : request.session.getActiveModelString?.();
 	const modelResolution = {
-		requestModel: preparedSeance?.modelPatterns ?? request.model,
+		requestModel: preparedSeance?.modelPatterns ?? (await pinRequestedModels(request)),
 		settingsOverride: hasPreparedSeance ? undefined : agentModelOverrides[agentName],
 		agentModel: hasPreparedSeance ? undefined : effectiveAgent.model,
 		settings: request.session.settings,

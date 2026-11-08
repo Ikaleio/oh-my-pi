@@ -665,7 +665,11 @@ describe("structured subagent primitive", () => {
 
 	it("does not assign a role when a child uses an explicit model selector", async () => {
 		mockDiscovery();
-		const childSession = session({ modelRoles: { reviewer: "openai/gpt-4o" } });
+		const authStorage = await AuthStorage.create(":memory:");
+		authStorage.keys.setRuntime("openai", "test-key");
+		const childSession = Object.assign(session({ modelRoles: { reviewer: "openai/gpt-4o" } }), {
+			modelRegistry: new ModelRegistry(authStorage),
+		});
 		const dispatched: executorModule.ExecutorOptions[] = [];
 		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
 			dispatched.push(options);

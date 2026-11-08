@@ -236,8 +236,11 @@ function validateShapeParams(batchEnabled: boolean, params: TaskParams): string 
 	if (Object.hasOwn(params, "schema")) {
 		return "The task tool uses `outputSchema`; rename the stale `schema` field.";
 	}
-	if (batchEnabled && params.tasks !== undefined && Object.hasOwn(params, "agent")) {
-		return "Top-level `agent` is not part of the batch shape. Set `tasks[].agent` instead.";
+	if (batchEnabled && params.tasks !== undefined) {
+		const misplaced = (["agent", "model"] as const).find(field => Object.hasOwn(params, field));
+		if (misplaced) {
+			return `Top-level \`${misplaced}\` is not part of the batch shape. Set \`tasks[].${misplaced}\` instead.`;
+		}
 	}
 	if (!batchEnabled) {
 		const disallowed = (["tasks", "context"] as const).filter(field => params[field] !== undefined);
@@ -259,10 +262,22 @@ function validateShapeParams(batchEnabled: boolean, params: TaskParams): string 
  * undefined when valid.
  */
 
-/** Reject an out-of-range `effort` selector on internal/stale-transcript calls that bypass the wire schema. */
-function validateEffort(effort: TaskEffort | undefined, label: string): string | undefined {
-	if (effort === undefined || TASK_EFFORTS.includes(effort)) return undefined;
-	return `${label} has an invalid \`effort\` value ${JSON.stringify(effort)}. Use "lo", "med", or "hi".`;
+/** Reject an out-of-range `effort` or malformed `model` on internal/stale-transcript calls that bypass the wire schema. */
+function validateSpawnOptions(item: TaskItem | TaskParams, label: string): string | undefined {
+	const effort: unknown = item.effort;
+	if (effort !== undefined && !TASK_EFFORTS.includes(effort as TaskEffort)) {
+		return `${label} has an invalid \`effort\` value ${JSON.stringify(effort)}. Use ${TASK_EFFORTS.map(level => `"${level}"`).join(", ")}.`;
+	}
+	const model: unknown = item.model;
+	const selectors: unknown[] = Array.isArray(model) ? model : [model];
+	if (
+		model !== undefined &&
+		(selectors.length === 0 ||
+			!selectors.every(selector => typeof selector === "string" && selector.trim().length > 0))
+	) {
+		return `${label} has an invalid \`model\` selector. Provide a non-empty selector or selector array.`;
+	}
+	return undefined;
 }
 
 function validateTaskInput(item: TaskItem | undefined, label: string, fileEnabled: boolean): string | undefined {
@@ -308,14 +323,9 @@ function validateSpawnParams(params: TaskParams, batchEnabled: boolean, fileEnab
 		}
 		for (let i = 0; i < tasks.length; i++) {
 			const item = tasks[i];
-			const inputError = validateTaskInput(
-				item,
-				`Task ${i + 1}${item?.name ? ` (\`${item.name}\`)` : ""}`,
-				fileEnabled,
-			);
-			if (inputError) return inputError;
-			const effortError = validateEffort(item.effort, `Task ${i + 1}${item.name ? ` (\`${item.name}\`)` : ""}`);
-			if (effortError) return effortError;
+			const label = `Task ${i + 1}${item?.name ? ` (\`${item.name}\`)` : ""}`;
+			const error = validateTaskInput(item, label, fileEnabled) ?? validateSpawnOptions(item, label);
+			if (error) return error;
 		}
 		const seen = new Map<string, string>();
 		for (const item of tasks) {
@@ -336,7 +346,7 @@ function validateSpawnParams(params: TaskParams, batchEnabled: boolean, fileEnab
 	if (batchEnabled && params.task === undefined && params.taskFile === undefined) {
 		return "Missing `tasks`. Provide a `tasks` array (one subagent per item) with a shared `context`.";
 	}
-	return validateTaskInput(params, "The call", fileEnabled) ?? validateEffort(params.effort, "The call");
+	return validateTaskInput(params, "The call", fileEnabled) ?? validateSpawnOptions(params, "The call");
 }
 
 /**

@@ -156,10 +156,8 @@ export async function resolveSeanceSource(
 	}
 	throw new Error(`Session "${label}" was not found.`);
 }
-const modelSelectorInputSchema = type("string | string[]");
 export const seanceTaskSchemaFields = {
 	"sourceSession?": type("string"),
-	"model?": modelSelectorInputSchema,
 } satisfies Required<SeanceTaskSchemaFields>;
 export const seanceTaskGuidance = seanceTaskGuidanceTemplate;
 
@@ -172,7 +170,6 @@ function validateSeanceFields(
 	if (agent !== SEANCE_AGENT_NAME) {
 		if (item.sourceSession !== undefined)
 			return `\`sourceSession\` is only accepted for the \`${SEANCE_AGENT_NAME}\` agent.`;
-		if (item.model !== undefined) return `\`model\` is only accepted for the \`${SEANCE_AGENT_NAME}\` agent.`;
 		return undefined;
 	}
 	// Hidden bundled seance (plan mode, policy) is rejected at spawn; a custom shadow is an ordinary agent.
@@ -182,18 +179,6 @@ function validateSeanceFields(
 	}
 	if ("tools" in item && item.tools?.length)
 		return `${label} cannot pass custom tools to the read-only \`${SEANCE_AGENT_NAME}\` agent.`;
-	const model: unknown = item.model;
-	if (
-		model !== undefined &&
-		!(
-			(typeof model === "string" && model.trim().length > 0) ||
-			(Array.isArray(model) &&
-				model.length > 0 &&
-				model.every(value => typeof value === "string" && value.trim().length > 0))
-		)
-	) {
-		return `${label} has an invalid \`model\` selector. Provide a non-empty selector or selector array.`;
-	}
 	return undefined;
 }
 
@@ -205,8 +190,8 @@ export function validateSeanceParams(context: {
 }): string | undefined {
 	const { params, batchEnabled, defaultAgent, seanceAdvertised } = context;
 	if (batchEnabled && params.tasks !== undefined) {
-		if (params.sourceSession !== undefined || params.model !== undefined) {
-			return `Put \`sourceSession\` and \`model\` on the individual \`${SEANCE_AGENT_NAME}\` item inside \`tasks[]\`.`;
+		if (params.sourceSession !== undefined) {
+			return `Put \`sourceSession\` on the individual \`${SEANCE_AGENT_NAME}\` item inside \`tasks[]\`.`;
 		}
 		for (let index = 0; index < params.tasks.length; index++) {
 			const item = params.tasks[index]!;

@@ -1,4 +1,5 @@
 import {
+	formatModelSelectorValue,
 	MAX_THINKING_SUFFIX_OPTIONS,
 	parseThinkingSuffix,
 	splitThinkingSuffix,
@@ -882,14 +883,66 @@ export function providerModelHint(selector: string, models: readonly Model<Api>[
 	if (slashIndex === -1) return "";
 	const lowerProvider = selector.slice(0, slashIndex).toLowerCase();
 	const modelId = splitThinkingSuffix(selector.slice(slashIndex + 1), -1, MAX_THINKING_SUFFIX_OPTIONS).base;
+	return nearMatchHint(
+		modelId,
+		models.filter(model => model.provider.toLowerCase() === lowerProvider),
+	);
+}
+
+/** ` Did you mean a, b, c?` naming up to three `models` whose ids fuzzy-match `modelId`, or `""`. */
+function nearMatchHint(modelId: string, models: readonly Model<Api>[]): string {
 	const nearMatches = models
-		.filter(model => model.provider.toLowerCase() === lowerProvider)
 		.map(model => ({ model, match: fuzzyMatch(modelId, model.id) }))
 		.filter(entry => entry.match.matches)
 		.sort((a, b) => a.match.score - b.match.score)
 		.slice(0, 3)
 		.map(entry => formatModelString(entry.model));
 	return nearMatches.length > 0 ? ` Did you mean ${nearMatches.join(", ")}?` : "";
+}
+
+const MAX_LISTED_MODEL_CHOICES = 8;
+
+/**
+ * Pin a caller-chosen selector to exactly one of `availableModels` and return
+ * its canonical `provider/id[:level]`. Provider-qualified selectors resolve
+ * exactly through {@link parseModelPattern}. A bare id must name a single
+ * model: when several models carry the id (one id served by several
+ * providers) or, lacking an exact id, several contain it, this throws with the
+ * qualified choices instead of picking one by preference. Unknown selectors
+ * throw with near matches.
+ */
+export function resolveUniqueModelSelector(selector: string, availableModels: Model<Api>[]): string {
+	const trimmed = selector.trim();
+	const resolved = parseModelPattern(trimmed, availableModels, undefined, {
+		allowInvalidThinkingSelectorFallback: false,
+	});
+	if (!resolved.model) {
+		const hint = trimmed.includes("/")
+			? providerModelHint(trimmed, availableModels)
+			: nearMatchHint(splitThinkingSuffix(trimmed, -1, MAX_THINKING_SUFFIX_OPTIONS).base, availableModels);
+		throw new Error(`Model "${trimmed}" is not available.${hint}`);
+	}
+	const level = resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined;
+	const levelSuffix = level ? `:${level}` : "";
+	const id =
+		levelSuffix && trimmed.toLowerCase().endsWith(levelSuffix) ? trimmed.slice(0, -levelSuffix.length) : trimmed;
+	if (!id.includes("/")) {
+		// Mirrors matchModel's bare-id phases: exact id first, then id/name substring.
+		const lowerId = id.toLowerCase();
+		const exact = availableModels.filter(model => model.id.toLowerCase() === lowerId);
+		const matches =
+			exact.length > 0
+				? exact
+				: availableModels.filter(
+						model => model.id.toLowerCase().includes(lowerId) || model.name?.toLowerCase().includes(lowerId),
+					);
+		if (matches.length > 1) {
+			const choices = matches.slice(0, MAX_LISTED_MODEL_CHOICES).map(formatModelString).join(", ");
+			const more = matches.length > MAX_LISTED_MODEL_CHOICES ? ", …" : "";
+			throw new Error(`Model "${trimmed}" matches ${matches.length} available models; name one: ${choices}${more}.`);
+		}
+	}
+	return formatModelSelectorValue(formatModelStringWithRouting(resolved.model), level);
 }
 
 /**
