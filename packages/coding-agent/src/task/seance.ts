@@ -156,8 +156,10 @@ export async function resolveSeanceSource(
 	}
 	throw new Error(`Session "${label}" was not found.`);
 }
+const modelSelectorInputSchema = type("string | string[]");
 export const seanceTaskSchemaFields = {
 	"sourceSession?": type("string"),
+	"model?": modelSelectorInputSchema,
 } satisfies Required<SeanceTaskSchemaFields>;
 export const seanceTaskGuidance = seanceTaskGuidanceTemplate;
 
@@ -170,6 +172,7 @@ function validateSeanceFields(
 	if (agent !== SEANCE_AGENT_NAME) {
 		if (item.sourceSession !== undefined)
 			return `\`sourceSession\` is only accepted for the \`${SEANCE_AGENT_NAME}\` agent.`;
+		// Elsewhere `model` is the per-call selector, decided by `task.perCallModel` at preflight.
 		return undefined;
 	}
 	// Hidden bundled seance (plan mode, policy) is rejected at spawn; a custom shadow is an ordinary agent.
@@ -179,6 +182,18 @@ function validateSeanceFields(
 	}
 	if ("tools" in item && item.tools?.length)
 		return `${label} cannot pass custom tools to the read-only \`${SEANCE_AGENT_NAME}\` agent.`;
+	const model: unknown = item.model;
+	if (
+		model !== undefined &&
+		!(
+			(typeof model === "string" && model.trim().length > 0) ||
+			(Array.isArray(model) &&
+				model.length > 0 &&
+				model.every(value => typeof value === "string" && value.trim().length > 0))
+		)
+	) {
+		return `${label} has an invalid \`model\` selector. Provide a non-empty selector or selector array.`;
+	}
 	return undefined;
 }
 
@@ -191,8 +206,10 @@ export function validateSeanceParams(context: {
 	const { params, batchEnabled, defaultAgent, seanceAdvertised } = context;
 	if (batchEnabled && params.tasks !== undefined) {
 		if (params.sourceSession !== undefined) {
-			return `Put \`sourceSession\` on the individual \`${SEANCE_AGENT_NAME}\` item inside \`tasks[]\`.`;
+			const fields = params.model !== undefined ? "`sourceSession` and `model`" : "`sourceSession`";
+			return `Put ${fields} on the individual \`${SEANCE_AGENT_NAME}\` item inside \`tasks[]\`.`;
 		}
+		if (params.model !== undefined) return "Put `model` on the individual items inside `tasks[]`.";
 		for (let index = 0; index < params.tasks.length; index++) {
 			const item = params.tasks[index]!;
 			const label = `Task ${index + 1}${item.name ? ` (\`${item.name}\`)` : ""}`;

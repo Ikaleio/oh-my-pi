@@ -46,22 +46,20 @@ export interface SubagentEventPayload {
 const outputSchemaInputSchema = type("object | boolean | string | null");
 // Coarse per-spawn thinking effort; must stay in sync with TASK_EFFORTS in ../thinking.
 const effortRule = '"lo" | "med" | "hi"' as const;
-// Per-spawn model selector(s); overrides settings and the agent definition.
-const modelRule = "string | string[]" as const;
 
-// Seance-only per-spawn fields the task tool refuses for every other agent.
-// Typed against SeanceTaskSchemaFields so a field added there fails to compile
-// until it is listed here too; a missed key would be dropped on batch items.
-const SEANCE_ITEM_KEY_SET = { sourceSession: true } as const satisfies Record<SeanceItemKey, true>;
+// Per-spawn fields the seance schema adds or widens. Typed against
+// SeanceTaskSchemaFields so a field added there fails to compile until it is
+// listed here too; a missed key would be dropped on batch items.
+const SEANCE_ITEM_KEY_SET = { sourceSession: true, model: true } as const satisfies Record<SeanceItemKey, true>;
 const SEANCE_ITEM_KEYS = Object.keys(SEANCE_ITEM_KEY_SET);
 
 /**
- * Keep a batch item's seance-only keys through undeclared-key deletion: the
- * item schema declares them only while seance is advertised. Argument
- * validation re-attaches only root keys, so without this a `tasks[].sourceSession`
- * on an ordinary agent is deleted before execute() instead of reaching the
- * refusal the flat form's root key gets.
- * Other stale item keys are still deleted, and the wire schema is unchanged.
+ * Keep a batch item's seance keys through undeclared-key deletion: the item
+ * schema declares `sourceSession` only while seance is advertised, and argument
+ * validation re-attaches only root keys, so without this a
+ * `tasks[].sourceSession` on an ordinary agent is deleted before execute()
+ * instead of reaching the refusal. Other stale item keys are still deleted, and
+ * the wire schema is unchanged.
  */
 function keepSeanceItemKeys<T, I>(item: FluentType<T, I>): FluentType<unknown, I> {
 	return item.onUndeclaredKey("ignore").pipe((input: unknown): unknown => {
@@ -77,23 +75,23 @@ function keepSeanceItemKeys<T, I>(item: FluentType<T, I>): FluentType<unknown, I
 export const taskItemSchema = type({
 	"name?": "string",
 	agent: "string = 'task'",
-	"model?": modelRule,
 	task: "string",
 	solutionSpace: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
 	"tools?": "string[]",
+	"model?": "string",
 	"+": "delete",
 });
 const taskItemSchemaIsolated = type({
 	"name?": "string",
 	agent: "string = 'task'",
-	"model?": modelRule,
 	task: "string",
 	solutionSpace: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
 	"tools?": "string[]",
+	"model?": "string",
 	"isolated?": "boolean",
 	"+": "delete",
 });
@@ -101,24 +99,24 @@ const taskItemSchemaIsolated = type({
 export const taskSchema = type({
 	"name?": "string",
 	agent: "string = 'task'",
-	"model?": modelRule,
 	task: "string",
 	solutionSpace: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
 	"tools?": "string[]",
+	"model?": "string",
 	"isolated?": "boolean",
 	"+": "delete",
 });
 const taskSchemaNoIsolation = type({
 	"name?": "string",
 	agent: "string = 'task'",
-	"model?": modelRule,
 	task: "string",
 	solutionSpace: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
 	"tools?": "string[]",
+	"model?": "string",
 	"+": "delete",
 });
 function guardBatchAgent(schema: BaseType): BaseType {
@@ -165,9 +163,10 @@ function taskAgentSchemaRule(defaultAgent: string): string {
 	return "string";
 }
 
-/** Seance-only task fields; `seanceTaskSchemaFields` in ./seance must match it exactly. */
+/** Task fields the seance schema adds or widens; `seanceTaskSchemaFields` in ./seance must match it exactly. */
 export type SeanceTaskSchemaFields = {
 	"sourceSession?"?: FluentType<string>;
+	"model?"?: FluentType<string | string[]>;
 };
 
 type SeanceItemKey = {
@@ -191,13 +190,14 @@ function createTaskSchema(options: {
 		? { "outputSchema?": outputSchemaInputSchema, "schemaMode?": '"permissive" | "strict"' }
 		: {};
 	const toolsField = options.evalToolsEnabled ? { "tools?": "string[]" } : {};
-	const seanceFields = options.seanceFields;
+	// `model` is always declared, and preflight decides whether a per-call model
+	// is allowed; seance widens it to a list.
+	const seanceFields = { "model?": "string", ...options.seanceFields };
 	if (options.batchEnabled) {
 		if (options.isolationEnabled) {
 			const item = type.raw({
 				"name?": "string",
 				agent,
-				"model?": modelRule,
 				...taskFields,
 				solutionSpace: "string",
 				...effortField,
@@ -218,7 +218,6 @@ function createTaskSchema(options: {
 		const item = type.raw({
 			"name?": "string",
 			agent,
-			"model?": modelRule,
 			...taskFields,
 			solutionSpace: "string",
 			...effortField,
@@ -239,7 +238,6 @@ function createTaskSchema(options: {
 		return type.raw({
 			"name?": "string",
 			agent,
-			"model?": modelRule,
 			...taskFields,
 			solutionSpace: "string",
 			...effortField,
@@ -253,7 +251,6 @@ function createTaskSchema(options: {
 	return type.raw({
 		"name?": "string",
 		agent,
-		"model?": modelRule,
 		...taskFields,
 		solutionSpace: "string",
 		...effortField,
@@ -276,7 +273,7 @@ export function getTaskSchema(options: {
 	/** Advertise `taskFile` (`task.file`); default off. */
 	file?: boolean;
 	defaultAgent?: string;
-	/** Advertise the historical `sourceSession` field for the bundled seance agent. */
+	/** Advertise historical source/model fields for the bundled seance agent. */
 	seanceFields?: SeanceTaskSchemaFields;
 }): TaskToolSchemaInstance {
 	const defaultAgent = options.defaultAgent ?? "task";
